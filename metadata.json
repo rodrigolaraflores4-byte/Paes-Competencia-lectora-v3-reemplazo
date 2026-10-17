@@ -1,0 +1,7 @@
+{
+  "name": "PAES Lector",
+  "description": "Plataforma educativa para la preparación de la PAES de Competencia Lectora en Chile. Banco de textos con habilidades DEMRE, práctica formativa y sumativa para estudiantes, y analítica docente para IV° Medio A y B.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+

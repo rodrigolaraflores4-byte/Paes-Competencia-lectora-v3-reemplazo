@@ -1,0 +1,72 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+  }
+}
+
+.font-serif-reading {
+  font-family: 'Lora', Georgia, serif;
+}
+
+.font-sans-ui {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+/* Custom scrollbar for text reading pane */
+.reading-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.reading-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.reading-scrollbar::-webkit-scrollbar-thumb {
+  background-color: rgba(168, 162, 158, 0.4);
+  border-radius: 9999px;
+}
+.reading-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(120, 113, 108, 0.6);
+}
+
+/* ===== Mejoras de diseño e interacción ===== */
+html { scroll-behavior: smooth; }
+
+body {
+  background-image:
+    radial-gradient(ellipse 80% 50% at 10% -10%, rgba(251, 191, 36, 0.10), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 100% 0%, rgba(168, 85, 247, 0.07), transparent 60%);
+  background-attachment: fixed;
+}
+
+.no-scrollbar::-webkit-scrollbar { display: none; }
+.no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Botones y tarjetas clicables: respuesta táctil suave */
+button:not(:disabled), [role="button"] {
+  transition: transform 0.15s ease, box-shadow 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+}
+button:not(:disabled):active { transform: scale(0.97); }
+
+/* Foco visible y consistente (accesibilidad) */
+:focus-visible {
+  outline: 2px solid rgb(180 83 9);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+/* Entradas suaves reutilizables */
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up { animation: fade-up 0.35s ease both; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
