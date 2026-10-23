@@ -38,3 +38,33 @@
 ## Corrección: error 404 al aprobar textos (y al editar/borrar/reordenar preguntas)
 - Faltaba en el servidor la ruta `POST /api/texts/:id/approve`. Agregada; si el texto no cumple los requisitos (sin preguntas, alternativas vacías) ahora muestra el motivo.
 - También faltaban las rutas que usa el cliente para editar, eliminar y reordenar preguntas dentro de un texto. Agregadas.
+
+## Corrección: el alumno volvía al inicio de sesión
+- Si una instancia nueva del servidor no conoce al usuario de la sesión, ahora lo busca en Supabase antes de rechazarlo.
+- Ante un 401 el cliente reintenta una vez y, si persiste, avisa con un mensaje antes de volver al inicio de sesión.
+- Causa de fondo: sin Supabase vinculado (variables de entorno + migración SQL), cada instancia de Vercel guarda sus propios datos y no conoce a los alumnos creados en otra.
+
+## Analítica: seguimiento de estudiantes
+- Nueva tabla en Analítica con **avance**, **días de racha** (vigente y récord) y **% de logro** (lectura + vocabulario) por estudiante.
+  Con buscador, filtros (con racha, sin actividad, logro bajo 55%), orden por columna y descarga en CSV (abre bien en Excel).
+
+## Actividades y controles que se borraban al volver
+- Causa: Vercel usa varias instancias del servidor y cada una guardaba su propia copia. Ahora, antes de cada petición, el servidor
+  revisa si otra instancia guardó algo nuevo y lo recarga; lo creado por el docente se ve igual en todas.
+- Si una tabla falla al guardar, las demás igual se guardan (antes se detenía todo) y el error indica cuál tabla falló.
+
+## Importar textos
+- Banco de textos → **Importar textos**: sube uno o varios .txt/.md, o pega el contenido, con textos y preguntas en un formato simple
+  (descarga la plantilla desde el mismo botón). Vista previa con avisos, aprobación automática opcional y creación del taller y ensayo.
+- Incluye un botón que copia instrucciones para que una IA convierta tu material al formato.
+- El límite de tamaño de las peticiones subió a 4 MB.
+
+## Archivos nuevos
+`src/components/teacher/{StudentProgressTable,TextImportModal,VocabularyManager}.tsx`, `src/components/common/SyncBadge.tsx`,
+`src/utils/textImport.ts`, `supabase-migration.sql`.
+## Archivos modificados
+`server/{db,app}.ts`, `src/api/client.ts`, `src/types/index.ts`, `src/App.tsx`, `src/index.css`, `src/utils/streak.ts`,
+`src/components/teacher/{TextBank,AnalyticsDashboard,SupabaseSettings}.tsx`,
+`src/components/student/{StudentDashboard,StudentPractice,VocabularyPractice}.tsx`, `.env.example`, `supabase-schema.sql`.
+## Archivo eliminado
+`api/index.ts` (conflicto con `api/index.js` en Vercel).
