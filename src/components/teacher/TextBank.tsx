@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.js';
 import { TextItem, Question, TextEditorialStatus, TextType, TextDifficulty, DemreSkill } from '../../types/index.js';
 import { TextEditorModal } from './TextEditorModal.js';
+import { TextImportModal } from './TextImportModal.js';
 import { QuestionEditorModal } from './QuestionEditorModal.js';
 import { 
   BookOpen, 
@@ -20,7 +21,8 @@ import {
   Award, 
   Check, 
   HelpCircle,
-  FileCheck
+  FileCheck,
+  Upload
 } from 'lucide-react';
 
 export const TextBank: React.FC = () => {
@@ -37,6 +39,7 @@ export const TextBank: React.FC = () => {
   // Modals state
   const [textModalOpen, setTextModalOpen] = useState(false);
   const [editingText, setEditingText] = useState<TextItem | null>(null);
+  const [importOpen, setImportOpen] = useState(false);
 
   const [questionModalOpen, setQuestionModalOpen] = useState(false);
   const [activeTextForQuestion, setActiveTextForQuestion] = useState<TextItem | null>(null);
@@ -193,16 +196,25 @@ export const TextBank: React.FC = () => {
             Crea textos con saltos de línea y asocia preguntas con habilidades DEMRE (Localizar, Interpretar y Evaluar)
           </p>
         </div>
-        <button
-          onClick={() => {
-            setEditingText(null);
-            setTextModalOpen(true);
-          }}
-          className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-sm font-bold shadow-xs flex items-center gap-1.5 transition-colors self-start sm:self-auto"
-        >
-          <Plus className="w-4 h-4" />
-          Crear Nuevo Texto
-        </button>
+        <div className="flex flex-wrap gap-2 self-start sm:self-auto">
+          <button
+            onClick={() => setImportOpen(true)}
+            className="px-4 py-2 bg-white hover:bg-amber-50 text-amber-900 border border-amber-300 rounded-lg text-sm font-bold shadow-xs flex items-center gap-1.5 transition-colors"
+          >
+            <Upload className="w-4 h-4" />
+            Importar textos
+          </button>
+          <button
+            onClick={() => {
+              setEditingText(null);
+              setTextModalOpen(true);
+            }}
+            className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-sm font-bold shadow-xs flex items-center gap-1.5 transition-colors"
+          >
+            <Plus className="w-4 h-4" />
+            Crear Nuevo Texto
+          </button>
+        </div>
       </div>
 
       {/* Filters Bar */}
@@ -590,6 +602,8 @@ export const TextBank: React.FC = () => {
       )}
 
       {/* Modals */}
+      <TextImportModal open={importOpen} onClose={() => setImportOpen(false)} onImported={fetchTexts} />
+
       <TextEditorModal
         isOpen={textModalOpen}
         onClose={() => setTextModalOpen(false)}

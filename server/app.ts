@@ -6,7 +6,7 @@ import { OptionLetter, TextType, TextDifficulty, TextEditorialStatus } from '../
 
 const app = express();
 
-app.use(express.json());
+app.use(express.json({ limit: '4mb' }));
 
 // Helper to resolve the authenticated user per request (supports 40+ concurrent students)
 function getAuthUser(req: Request) {
@@ -27,6 +27,11 @@ const apiRouter = express.Router();
 apiRouter.use(async (req: Request, res: Response, next: express.NextFunction) => {
   const timeout = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
   try { await Promise.race([db.ensureReady(), timeout(9000)]); } catch { /* se sigue con datos locales */ }
+  try { await Promise.race([db.refreshIfStale(), timeout(6000)]); } catch { /* se sigue con lo que hay */ }
+  const sessionUserId = (req.headers['x-user-id'] as string) || '';
+  if (sessionUserId) {
+    try { await Promise.race([db.ensureUser(sessionUserId), timeout(4000)]); } catch { /* ignorar */ }
+  }
 
   if (process.env.VERCEL && req.method !== 'GET') {
     const originalJson = res.json.bind(res);
@@ -293,6 +298,23 @@ apiRouter.get('/texts/:id', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Texto no encontrado' });
   }
   res.json({ text });
+});
+
+apiRouter.post('/texts/import', (req: Request, res: Response) => {
+  const currentUser = getAuthUser(req);
+  if (!currentUser || currentUser.role !== 'docente') {
+    return res.status(403).json({ error: 'Solo los docentes pueden importar textos.' });
+  }
+  const { items, autoApprove, createAssignments } = req.body || {};
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'No hay textos para importar.' });
+  }
+  const results = db.importTexts(items, {
+    autoApprove: Boolean(autoApprove),
+    createAssignments: Boolean(createAssignments),
+    createdBy: currentUser.id,
+  });
+  res.status(201).json({ results, imported: results.filter(r => r.ok).length });
 });
 
 apiRouter.post('/texts', (req: Request, res: Response) => {
@@ -723,6 +745,12 @@ apiRouter.get('/student/learning-modules', (req: Request, res: Response) => {
   }
   const modules = db.getLearningModules(currentUser.id);
   res.json({ modules });
+});
+
+apiRouter.get('/analytics/student-progress', (req: Request, res: Response) => {
+  const user = getAuthUser(req);
+  if (!user || user.role !== 'docente') return res.status(403).json({ error: 'Solo los docentes pueden ver el seguimiento.' });
+  res.json(db.getStudentProgress());
 });
 
 apiRouter.get('/analytics', (req: Request, res: Response) => {

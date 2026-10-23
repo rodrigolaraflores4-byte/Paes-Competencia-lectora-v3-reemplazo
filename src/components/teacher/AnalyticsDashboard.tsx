@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { api } from '../../api/client.js';
+import { StudentProgressTable } from './StudentProgressTable.js';
 import { AnalyticsSummary, Assignment, DemreSkill } from '../../types/index.js';
 import { 
   BarChart3, 
@@ -80,6 +81,9 @@ export const AnalyticsDashboard: React.FC = () => {
           Descargar Planilla Excel (CSV)
         </button>
       </div>
+
+      {/* Seguimiento por estudiante: avance, racha y % de logro */}
+      <StudentProgressTable />
 
       {/* Filter Bar */}
       <div className="bg-white p-4 rounded-xl border border-stone-200 shadow-xs flex flex-col sm:flex-row gap-3 items-center justify-between">

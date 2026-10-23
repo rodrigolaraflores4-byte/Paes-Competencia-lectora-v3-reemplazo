@@ -21,7 +21,9 @@ import {
   VocabExercise,
   VocabProgress,
   VocabAnalytics,
-  CloudSyncState
+  CloudSyncState,
+  StudentProgressRow,
+  StudentProgressSummary
 } from '../src/types/index.js';
 import { INITIAL_VOCAB_EXERCISES } from '../src/data/vocabData.js';
 import { 
@@ -522,6 +524,100 @@ class DatabaseStore {
     };
   }
 
+  /** Importación masiva de textos con sus preguntas (un solo guardado en la nube al final). */
+  public importTexts(
+    items: any[],
+    opts: { autoApprove: boolean; createAssignments: boolean; createdBy: string }
+  ): { title: string; ok: boolean; message: string; text_id?: string; questions?: number }[] {
+    const TYPES = ['narrativo', 'literario', 'expositivo', 'argumentativo', 'columna_opinion', 'ensayo', 'noticia', 'instructivo'];
+    const DIFFS = ['inicial', 'medio', 'avanzado'];
+    const SKILLS = ['localizar', 'interpretar_relacionar', 'evaluar'];
+    const LETTERS: OptionLetter[] = ['A', 'B', 'C', 'D'];
+    const str = (v: any) => (typeof v === 'string' ? v.trim() : '');
+    const results: { title: string; ok: boolean; message: string; text_id?: string; questions?: number }[] = [];
+    const created: TextItem[] = [];
+
+    for (const raw of (Array.isArray(items) ? items : []).slice(0, 100)) {
+      const title = str(raw?.title);
+      const content = typeof raw?.content === 'string' ? raw.content.trim() : '';
+      if (!title || !content) {
+        results.push({ title: title || '(sin título)', ok: false, message: 'Falta el título o el contenido.' });
+        continue;
+      }
+      if (this.data.texts.some(t => t.title.trim().toLowerCase() === title.toLowerCase())) {
+        results.push({ title, ok: false, message: 'Ya existe un texto con ese título; se omitió para no duplicarlo.' });
+        continue;
+      }
+
+      const now = new Date().toISOString();
+      const text: TextItem = {
+        id: `txt_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        title,
+        author: str(raw.author),
+        source: str(raw.source),
+        content,
+        type: (TYPES.includes(raw.type) ? raw.type : 'argumentativo') as any,
+        difficulty: (DIFFS.includes(raw.difficulty) ? raw.difficulty : 'medio') as any,
+        status: 'borrador',
+        created_by: opts.createdBy,
+        created_at: now,
+        updated_at: now,
+      };
+      this.data.texts.unshift(text);
+
+      let order = 0;
+      for (const rq of Array.isArray(raw.questions) ? raw.questions : []) {
+        const prompt = str(rq?.prompt);
+        const explanation = str(rq?.explanation);
+        const options: any = {};
+        LETTERS.forEach(l => { options[l] = str(rq?.options?.[l]); });
+        if (!prompt || !explanation || LETTERS.some(l => !options[l]) || !LETTERS.includes(rq?.correct_option)) continue;
+        const dist: any = {};
+        LETTERS.forEach(l => { const d = str(rq?.distractor_explanations?.[l]); if (d) dist[l] = d; });
+        this.data.questions.push({
+          id: `q_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+          text_id: text.id,
+          order_index: ++order,
+          prompt,
+          skill: (SKILLS.includes(rq.skill) ? rq.skill : 'interpretar_relacionar') as any,
+          options,
+          correct_option: rq.correct_option,
+          explanation,
+          distractor_explanations: Object.keys(dist).length ? dist : undefined,
+          points: Math.max(1, Number(rq.points) || 1),
+        });
+      }
+
+      results.push({ title, ok: true, message: order > 0 ? `Importado con ${order} pregunta(s) como borrador.` : 'Importado como borrador, sin preguntas completas.', text_id: text.id, questions: order });
+      created.push(text);
+    }
+
+    this.save();
+
+    if (opts.autoApprove) {
+      for (const text of created) {
+        const r = results.find(x => x.text_id === text.id)!;
+        if (!r.questions) { r.message = 'Importado como borrador: no tiene preguntas completas, por eso no se aprobó.'; continue; }
+        const approved = this.approveText(text.id);
+        r.message = approved.success
+          ? `Importado y aprobado con ${r.questions} pregunta(s).`
+          : `Importado como borrador (no se pudo aprobar: ${approved.message}).`;
+      }
+    }
+
+    if (opts.createAssignments) {
+      for (const text of created) {
+        const r = results.find(x => x.text_id === text.id)!;
+        if (this.data.texts.find(t => t.id === text.id)?.status !== 'aprobado') continue;
+        const base = { text_id: text.id, course_ids: [] as string[], is_global: true, status: 'activa' as const, due_date: null, created_by: opts.createdBy };
+        this.createAssignment({ ...base, title: `Taller formativo: ${text.title}`, mode: 'formativo', max_attempts: 5 });
+        this.createAssignment({ ...base, title: `Ensayo: ${text.title}`, mode: 'evaluacion', max_attempts: 2 });
+        r.message += ' Se crearon el taller formativo y el ensayo.';
+      }
+    }
+    return results;
+  }
+
   public createText(data: Omit<TextItem, 'id' | 'created_at' | 'updated_at' | 'questions' | 'question_count'>): TextItem {
     const newText: TextItem = {
       ...data,
@@ -901,6 +997,76 @@ class DatabaseStore {
   }
 
   // --- Analytics Engine ---
+  /** Seguimiento por estudiante: avance, racha vigente y porcentaje de logro (lectura + vocabulario). */
+  public getStudentProgress(): { rows: StudentProgressRow[]; summary: StudentProgressSummary } {
+    const pct = (c: number, t: number) => (t > 0 ? Math.round((c / t) * 100) : 0);
+    const fmt = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+    const today = new Date();
+    const todayIso = fmt(today);
+    const yesterdayIso = fmt(new Date(today.getTime() - 24 * 60 * 60 * 1000));
+
+    const activeAssignments = this.data.assignments.filter(a => a.status === 'activa');
+    const activeIds = new Set(activeAssignments.map(a => a.id));
+    const vocabIds = new Set((this.data.vocab || []).map(v => v.id));
+    const vocabProgress = this.data.vocabProgress || [];
+
+    const rows: StudentProgressRow[] = this.data.users
+      .filter(u => u.role === 'estudiante')
+      .map(u => {
+        const attempts = this.data.attempts.filter(a => a.student_id === u.id);
+        const doneAssignments = new Set(attempts.filter(a => a.status === 'completed' && activeIds.has(a.assignment_id)).map(a => a.assignment_id));
+        const answers = attempts.flatMap(a => Object.values(a.answers || {}));
+        const readingCorrect = answers.filter(a => a.is_correct).length;
+
+        const mine = vocabProgress.filter(p => p.user_id === u.id && vocabIds.has(p.exercise_id));
+        const vocabCorrect = mine.filter(p => p.is_correct).length;
+
+        const total = activeAssignments.length + vocabIds.size;
+        const done = doneAssignments.size + mine.length;
+
+        const last = u.last_activity_date || '';
+        const alive = last === todayIso || last === yesterdayIso;
+        const lastAttemptDate = attempts.map(a => a.completed_at || a.started_at).filter(Boolean).sort().pop() || null;
+        const lastVocabDate = mine.map(p => p.answered_at).sort().pop() || null;
+        const lastActivity = [last ? `${last}T12:00:00` : null, lastAttemptDate, lastVocabDate].filter(Boolean).sort().pop() || null;
+
+        const totalAnswers = answers.length + mine.length;
+        return {
+          id: u.id,
+          name: u.name,
+          rut: u.rut,
+          activitiesDone: doneAssignments.size,
+          activitiesTotal: activeAssignments.length,
+          vocabDone: mine.length,
+          vocabTotal: vocabIds.size,
+          progressPct: pct(done, total),
+          streakDays: alive ? (u.streak_days ?? 0) : 0,
+          bestStreak: Math.max(u.highest_streak ?? 0, u.streak_days ?? 0),
+          lastActivity,
+          readingAnswers: answers.length,
+          readingCorrect,
+          vocabAnswers: mine.length,
+          vocabCorrect,
+          achievementPct: pct(readingCorrect + vocabCorrect, totalAnswers),
+          readingPct: answers.length ? pct(readingCorrect, answers.length) : null,
+          vocabPct: mine.length ? pct(vocabCorrect, mine.length) : null,
+        };
+      });
+
+    const withAnswers = rows.filter(r => r.readingAnswers + r.vocabAnswers > 0);
+    const avg = (xs: number[]) => (xs.length ? Math.round(xs.reduce((a, b) => a + b, 0) / xs.length) : 0);
+    return {
+      rows,
+      summary: {
+        students: rows.length,
+        avgProgress: avg(rows.map(r => r.progressPct)),
+        avgAchievement: avg(withAnswers.map(r => r.achievementPct)),
+        activeStreaks: rows.filter(r => r.streakDays > 0).length,
+        inactive: rows.length - withAnswers.length,
+      },
+    };
+  }
+
   public getAnalytics(filters?: { courseId?: string; assignmentId?: string }): AnalyticsSummary {
     let attempts = this.data.attempts.filter(a => a.status === 'completed');
     if (filters?.courseId) {
@@ -1091,7 +1257,7 @@ class DatabaseStore {
   public getSupabaseStatus() {
     return {
       configured: Boolean(this.supabase),
-      url: this.data.supabaseConfig?.url || process.env.VITE_SUPABASE_URL || '',
+      url: process.env.SUPABASE_URL || this.data.supabaseConfig?.url || process.env.VITE_SUPABASE_URL || '',
       anonKey: this.data.supabaseConfig?.anonKey ? '••••••••' + this.data.supabaseConfig.anonKey.slice(-6) : '',
       isConnected: Boolean(this.supabase),
       lastTested: this.data.supabaseConfig?.lastTested,
@@ -1155,6 +1321,9 @@ class DatabaseStore {
   private cloudTimer: ReturnType<typeof setTimeout> | null = null;
   private cloudPushing: Promise<void> | null = null;
   private pushed: Record<string, Map<string, string>> = {};
+  private knownVersion = '';
+  private lastVersionCheck = 0;
+  private refreshPromise: Promise<void> | null = null;
   private cloudStatus: CloudSyncState = { state: 'disabled', pending: false };
 
   public getCloudStatus(): CloudSyncState {
@@ -1255,30 +1424,52 @@ class DatabaseStore {
     const sb = this.supabase;
     if (!sb) return;
     const tables = this.cloudTables();
+    const errors: string[] = [];
+    let changes = 0;
 
+    // Cada tabla se intenta por separado: si una falla, las demás igual se guardan
     for (const { table, rows } of tables) {
-      const known = (this.pushed[table] ||= new Map());
-      const changed = rows.filter(r => force || known.get(r.id) !== JSON.stringify(r));
-      for (let i = 0; i < changed.length; i += 500) {
-        const chunk = changed.slice(i, i + 500);
-        const { error } = await sb.from(table).upsert(chunk, { onConflict: 'id' });
-        if (error) throw new Error(`${table}: ${error.message}`);
-        chunk.forEach(r => known.set(r.id, JSON.stringify(r)));
+      try {
+        const known = (this.pushed[table] ||= new Map());
+        const changed = rows.filter(r => force || known.get(r.id) !== JSON.stringify(r));
+        for (let i = 0; i < changed.length; i += 500) {
+          const chunk = changed.slice(i, i + 500);
+          const { error } = await sb.from(table).upsert(chunk, { onConflict: 'id' });
+          if (error) throw new Error(error.message);
+          chunk.forEach(r => known.set(r.id, JSON.stringify(r)));
+          changes += chunk.length;
+        }
+      } catch (err: any) {
+        errors.push(`${table}: ${err?.message || err}`);
       }
     }
 
     for (const { table, rows } of [...tables].reverse()) {
-      const known = this.pushed[table];
-      if (!known) continue;
-      const current = new Set(rows.map(r => r.id as string));
-      const gone = [...known.keys()].filter(id => !current.has(id));
-      for (let i = 0; i < gone.length; i += 100) {
-        const chunk = gone.slice(i, i + 100);
-        const { error } = await sb.from(table).delete().in('id', chunk);
-        if (error) throw new Error(`${table}: ${error.message}`);
-        chunk.forEach(id => known.delete(id));
+      try {
+        const known = this.pushed[table];
+        if (!known) continue;
+        const current = new Set(rows.map(r => r.id as string));
+        const gone = [...known.keys()].filter(id => !current.has(id));
+        for (let i = 0; i < gone.length; i += 100) {
+          const chunk = gone.slice(i, i + 100);
+          const { error } = await sb.from(table).delete().in('id', chunk);
+          if (error) throw new Error(error.message);
+          chunk.forEach(id => known.delete(id));
+          changes += chunk.length;
+        }
+      } catch (err: any) {
+        errors.push(`${table} (borrado): ${err?.message || err}`);
       }
     }
+
+    // Avisa a las demás instancias del servidor que hay datos nuevos
+    if (changes > 0) {
+      const v = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const { error } = await sb.from('app_meta').upsert({ key: 'version', value: { v } }, { onConflict: 'key' });
+      if (!error) this.knownVersion = v;
+    }
+
+    if (errors.length > 0) throw new Error(errors.join(' | '));
   }
 
   private async fetchAll(table: string): Promise<any[]> {
@@ -1301,6 +1492,10 @@ class DatabaseStore {
 
     const { data: meta, error: metaErr } = await sb.from('app_meta').select('value').eq('key', 'initialized').maybeSingle();
     if (metaErr) throw new Error(`app_meta: ${metaErr.message}. ¿Ejecutaste supabase-migration.sql en el SQL Editor?`);
+
+    // Se lee la versión ANTES de cargar los datos: si alguien guarda mientras tanto, se recargará después
+    const { data: verRow } = await sb.from('app_meta').select('value').eq('key', 'version').maybeSingle();
+    this.knownVersion = verRow?.value?.v || '';
 
     // ¿La nube ya tiene contenido de respaldos anteriores?
     let mode: 'replace' | 'merge' = 'replace';
@@ -1416,6 +1611,53 @@ class DatabaseStore {
       await sb.from('app_meta').upsert({ key: 'initialized', value: { at: new Date().toISOString(), merged: true } }, { onConflict: 'key' });
     }
     this.cloudStatus = { state: 'ok', lastSyncAt: new Date().toISOString(), pending: false };
+  }
+
+  /**
+   * Si una instancia nueva del servidor aún no conoce al usuario de la sesión (p. ej. un estudiante creado
+   * en otra instancia), lo busca directamente en Supabase para no devolver al estudiante al inicio de sesión.
+   */
+  public async ensureUser(id: string) {
+    if (!this.supabase || !id || this.data.users.some(u => u.id === id)) return;
+    try {
+      const { data: u } = await this.supabase.from('users').select('*').eq('id', id).maybeSingle();
+      if (!u) return;
+      this.data.users.push({
+        id: u.id, name: u.name, email: u.email, role: u.role, rut: u.rut || undefined,
+        password: u.password || 'PAES2026', course_id: u.course_id || undefined,
+        streak_days: u.streak_days ?? 0, highest_streak: u.highest_streak ?? 0,
+        last_activity_date: u.last_activity_date || undefined,
+        activity_history: u.activity_history || [], vocab_points: u.vocab_points ?? 0,
+      });
+      this.persist(this.data);
+    } catch (err) {
+      console.warn('ensureUser falló:', (err as any)?.message);
+    }
+  }
+
+  /**
+   * En Vercel hay varias instancias del servidor, cada una con su propia memoria. Antes de atender una
+   * petición se revisa (consulta mínima) si otra instancia guardó datos nuevos y, si es así, se recargan.
+   * Así lo que crea el docente (actividades, controles, alumnos, textos) se ve igual en todas.
+   */
+  public async refreshIfStale() {
+    if (!this.supabase || !this.hydrated || this.cloudDirty || this.cloudPushing || this.hydratePromise) return;
+    if (this.refreshPromise) { await this.refreshPromise; return; }
+    if (Date.now() - this.lastVersionCheck < 1500) return;
+    this.lastVersionCheck = Date.now();
+    this.refreshPromise = (async () => {
+      try {
+        const { data, error } = await this.supabase!.from('app_meta').select('value').eq('key', 'version').maybeSingle();
+        if (error) return;
+        const v = data?.value?.v || '';
+        if (v && v !== this.knownVersion) await this.hydrateFromCloud();
+      } catch (err) {
+        this.setCloudError(err);
+      } finally {
+        this.refreshPromise = null;
+      }
+    })();
+    await this.refreshPromise;
   }
 
   /** Garantiza que los datos de la nube estén cargados antes de atender una petición. */

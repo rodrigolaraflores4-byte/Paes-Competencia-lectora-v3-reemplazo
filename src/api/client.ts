@@ -11,14 +11,16 @@ import {
   LearningSkillModule,
   VocabExercise,
   VocabProgress,
-  VocabAnalytics
+  VocabAnalytics,
+  StudentProgressRow,
+  StudentProgressSummary
 } from '../types/index.js';
 import { INITIAL_VOCAB_EXERCISES } from '../data/vocabData.js';
 import { clientStore } from '../services/store.js';
 
 async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
   const savedUserId = typeof window !== 'undefined' ? sessionStorage.getItem('paes_session_user_id') : null;
-  const res = await fetch(url, {
+  const doFetch = () => fetch(url, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -26,11 +28,19 @@ async function fetchJson<T>(url: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   });
+  let res = await doFetch();
+
+  // Una instancia nueva del servidor puede tardar un instante en cargar los datos: se reintenta una vez
+  if (res.status === 401 && savedUserId && !url.includes('/auth/')) {
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    res = await doFetch();
+  }
 
   if (res.status === 401 && savedUserId && typeof window !== 'undefined' && !url.includes('/auth/')) {
-    // La sesión guardada ya no existe en el servidor (p. ej. tras un reinicio): pedir iniciar sesión de nuevo
+    // La sesión guardada ya no existe en el servidor: pedir iniciar sesión de nuevo (una sola vez)
     sessionStorage.removeItem('paes_session_user_id');
     localStorage.removeItem('paes_session_user_id');
+    alert('Tu sesión ya no es válida en el servidor. Vuelve a iniciar sesión. Si te vuelve a ocurrir, avisa a tu docente: puede ser que Supabase no esté vinculado.');
     window.location.reload();
   }
 
@@ -437,6 +447,15 @@ export const api = {
       return await clientStore.pullFromSupabase();
     }
   },
+
+  importTexts: (items: any[], opts: { autoApprove: boolean; createAssignments: boolean }) =>
+    fetchJson<{ results: { title: string; ok: boolean; message: string }[]; imported: number }>('/api/texts/import', {
+      method: 'POST',
+      body: JSON.stringify({ items, ...opts }),
+    }),
+
+  getStudentProgress: () =>
+    fetchJson<{ rows: StudentProgressRow[]; summary: StudentProgressSummary }>('/api/analytics/student-progress'),
 
   getDiagnostics: () =>
     fetchJson<{ diagnostics: any }>('/api/diagnostics'),

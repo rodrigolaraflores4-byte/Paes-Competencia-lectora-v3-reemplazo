@@ -291,3 +291,33 @@ export interface CloudSyncState {
   lastError?: string;
   pending: boolean;
 }
+
+// --- Seguimiento por estudiante (panel docente) ---
+export interface StudentProgressRow {
+  id: string;
+  name: string;
+  rut?: string;
+  activitiesDone: number;
+  activitiesTotal: number;
+  vocabDone: number;
+  vocabTotal: number;
+  progressPct: number;       // avance: ítems realizados / ítems disponibles
+  streakDays: number;        // racha vigente (0 si dejó de practicar)
+  bestStreak: number;
+  lastActivity: string | null;
+  readingAnswers: number;
+  readingCorrect: number;
+  vocabAnswers: number;
+  vocabCorrect: number;
+  achievementPct: number;    // logro: respuestas correctas / respuestas dadas (lectura + vocabulario)
+  readingPct: number | null;
+  vocabPct: number | null;
+}
+
+export interface StudentProgressSummary {
+  students: number;
+  avgProgress: number;
+  avgAchievement: number;
+  activeStreaks: number;
+  inactive: number;
+}
