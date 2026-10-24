@@ -448,6 +448,9 @@ export const api = {
     }
   },
 
+  deleteAssignment: (id: string) =>
+    fetchJson<{ success: boolean; deletedAttempts: number }>(`/api/assignments/${id}`, { method: 'DELETE' }),
+
   importTexts: (items: any[], opts: { autoApprove: boolean; createAssignments: boolean }) =>
     fetchJson<{ results: { title: string; ok: boolean; message: string }[]; imported: number }>('/api/texts/import', {
       method: 'POST',

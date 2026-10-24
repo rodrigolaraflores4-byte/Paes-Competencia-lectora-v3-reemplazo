@@ -211,7 +211,7 @@ class DatabaseStore {
     const user = this.data.users.find(u => u.id === userId);
     if (user) {
       this.data.currentUserId = user.id;
-      this.save();
+      this.persist(this.data);
       return user;
     }
     return null;
@@ -273,7 +273,7 @@ class DatabaseStore {
 
   public logoutUser(): void {
     this.data.currentUserId = '';
-    this.save();
+    this.persist(this.data);
   }
 
   public getUsers(role?: string, courseId?: string): User[] {
@@ -842,12 +842,35 @@ class DatabaseStore {
   public updateAssignment(id: string, updates: Partial<Assignment>): Assignment | null {
     const idx = this.data.assignments.findIndex(a => a.id === id);
     if (idx === -1) return null;
-    this.data.assignments[idx] = {
-      ...this.data.assignments[idx],
-      ...updates,
-    };
+    const current = this.data.assignments[idx];
+    const hasAttempts = this.data.attempts.some(a => a.assignment_id === id);
+
+    // Solo se aceptan campos editables (nada de campos calculados como question_count)
+    const patch: Partial<Assignment> = {};
+    if (typeof updates.title === 'string' && updates.title.trim()) patch.title = updates.title.trim();
+    if (updates.mode === 'formativo' || updates.mode === 'evaluacion') patch.mode = updates.mode;
+    if (updates.status === 'activa' || updates.status === 'cerrada') patch.status = updates.status;
+    if ('due_date' in updates) patch.due_date = updates.due_date || null;
+    if (updates.max_attempts !== undefined) patch.max_attempts = Math.max(1, Math.floor(Number(updates.max_attempts) || 1));
+    // Cambiar el texto solo es posible si nadie lo ha respondido aún
+    if (updates.text_id && updates.text_id !== current.text_id && !hasAttempts && this.data.texts.some(t => t.id === updates.text_id)) {
+      patch.text_id = updates.text_id;
+    }
+
+    this.data.assignments[idx] = { ...current, ...patch };
     this.save();
     return this.getAssignmentById(id) || null;
+  }
+
+  /** Elimina la actividad y los intentos de estudiantes asociados. */
+  public deleteAssignment(id: string): { success: boolean; deletedAttempts: number } {
+    const before = this.data.assignments.length;
+    this.data.assignments = this.data.assignments.filter(a => a.id !== id);
+    if (this.data.assignments.length === before) return { success: false, deletedAttempts: 0 };
+    const attemptsBefore = this.data.attempts.length;
+    this.data.attempts = this.data.attempts.filter(a => a.assignment_id !== id);
+    this.save();
+    return { success: true, deletedAttempts: attemptsBefore - this.data.attempts.length };
   }
 
   // --- Attempts & Submissions ---
@@ -1326,6 +1349,10 @@ class DatabaseStore {
   private refreshPromise: Promise<void> | null = null;
   private cloudStatus: CloudSyncState = { state: 'disabled', pending: false };
 
+  public hasPendingChanges(): boolean {
+    return Boolean(this.supabase) && this.cloudDirty;
+  }
+
   public getCloudStatus(): CloudSyncState {
     if (!this.supabase) return { state: 'disabled', pending: false };
     return { ...this.cloudStatus, pending: this.cloudDirty };
@@ -1641,7 +1668,9 @@ class DatabaseStore {
    * Así lo que crea el docente (actividades, controles, alumnos, textos) se ve igual en todas.
    */
   public async refreshIfStale() {
-    if (!this.supabase || !this.hydrated || this.cloudDirty || this.cloudPushing || this.hydratePromise) return;
+    if (!this.supabase || !this.hydrated || this.cloudPushing || this.hydratePromise) return;
+    if (this.cloudDirty) await this.flush(); // sube primero lo propio para no perder nada al recargar
+    if (this.cloudDirty) return;             // si no se pudo subir, no se recarga encima
     if (this.refreshPromise) { await this.refreshPromise; return; }
     if (Date.now() - this.lastVersionCheck < 1500) return;
     this.lastVersionCheck = Date.now();

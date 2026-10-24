@@ -214,8 +214,56 @@ export const TextAnnotator: React.FC<Props> = ({
     return offset;
   };
 
+  // Dispositivos táctiles: el panel de marcado va abajo, con botones grandes
+  const isCoarse = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
+  const [mobileSel, setMobileSel] = useState<{
+    start: number;
+    end: number;
+    text: string;
+    noteMode?: boolean;
+    noteDraft?: string;
+    noteColor?: HighlightColor;
+  } | null>(null);
+
+  // En el celular no existe "mouseup": se escucha el cambio de selección (con una breve pausa
+  // para que el estudiante termine de ajustar los tiradores de selección)
+  useEffect(() => {
+    if (!isCoarse) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const onChange = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        const sel = window.getSelection();
+        const container = textBodyRef.current;
+        if (!sel || sel.isCollapsed || !sel.rangeCount || !container) {
+          setMobileSel(prev => (prev?.noteMode ? prev : null));
+          return;
+        }
+        const range = sel.getRangeAt(0);
+        if (!container.contains(range.commonAncestorContainer)) return;
+        const str = sel.toString();
+        if (!str.trim()) return;
+        let start = getCharOffset(container, range.startContainer, range.startOffset);
+        let end = getCharOffset(container, range.endContainer, range.endOffset);
+        if (start > end) [start, end] = [end, start];
+        if (content.slice(start, end) !== str) {
+          const from = Math.max(0, start - 60);
+          const idx = content.slice(from, Math.min(content.length, end + 60)).indexOf(str);
+          if (idx !== -1) { start = from + idx; end = start + str.length; }
+        }
+        setMobileSel(prev => ({ start, end, text: str, noteMode: prev?.noteMode, noteDraft: prev?.noteDraft, noteColor: prev?.noteColor }));
+      }, 350);
+    };
+    document.addEventListener('selectionchange', onChange);
+    return () => {
+      clearTimeout(timer);
+      document.removeEventListener('selectionchange', onChange);
+    };
+  }, [isCoarse, content]);
+
   // Handle Text Selection event
   const handleMouseUp = () => {
+    if (isCoarse) return; // en pantallas táctiles lo maneja el panel inferior
     const selection = window.getSelection();
     if (!selection || selection.isCollapsed || !selection.rangeCount) {
       return;
@@ -501,7 +549,7 @@ export const TextAnnotator: React.FC<Props> = ({
                 <button
                   key={color}
                   onClick={() => setActiveTool(color)}
-                  className={`w-7 h-7 rounded-md flex items-center justify-center transition-transform ${
+                  className={`w-9 h-9 sm:w-7 sm:h-7 rounded-md flex items-center justify-center transition-transform ${
                     isSelected
                       ? 'ring-2 ring-stone-900 scale-105 shadow-2xs'
                       : 'hover:scale-105 opacity-80 hover:opacity-100'
@@ -529,7 +577,7 @@ export const TextAnnotator: React.FC<Props> = ({
           {/* Eraser */}
           <button
             onClick={() => setActiveTool('eraser')}
-            className={`p-1.5 rounded text-xs transition-colors ${
+            className={`p-2.5 sm:p-1.5 rounded text-xs transition-colors ${
               activeTool === 'eraser'
                 ? 'bg-red-600 text-white shadow-2xs'
                 : 'text-stone-600 hover:bg-red-50 hover:text-red-600'
@@ -566,6 +614,15 @@ export const TextAnnotator: React.FC<Props> = ({
             title="Estrategias de Marcado PAES (Guía DEMRE)"
           >
             <HelpCircle className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Tamaño de letra en celular: un solo botón que rota A- / A / A+ */}
+          <button
+            onClick={() => onChangeFontSize(fontSize === 'sm' ? 'base' : fontSize === 'base' ? 'lg' : 'sm')}
+            className="sm:hidden px-2.5 h-9 rounded-lg border border-stone-200 bg-white text-stone-700 text-xs font-bold"
+            aria-label="Cambiar tamaño de letra"
+          >
+            Aa {fontSize === 'sm' ? '−' : fontSize === 'lg' ? '+' : ''}
           </button>
 
           {/* Typography options */}
@@ -618,7 +675,7 @@ export const TextAnnotator: React.FC<Props> = ({
       {/* Main Reading area + Optional Side Notes Drawer */}
       <div className="flex-1 flex overflow-hidden relative">
         {/* Scrollable Text Body */}
-        <div className="flex-1 overflow-y-auto reading-scrollbar p-5 sm:p-8 md:p-10 bg-white">
+        <div className="flex-1 overflow-y-auto reading-scrollbar p-4 pb-32 sm:p-8 sm:pb-8 md:p-10 bg-white">
           <div className="max-w-2xl mx-auto space-y-5">
             {/* Reading Header */}
             <div className="pb-4 border-b border-stone-100">
@@ -649,7 +706,7 @@ export const TextAnnotator: React.FC<Props> = ({
             {/* Reading Content with Active Annotations */}
             <div
               ref={textBodyRef}
-              className={`leading-relaxed text-stone-900 whitespace-pre-line ${
+              className={`reading-body leading-relaxed text-stone-900 whitespace-pre-line ${
                 fontFamily === 'serif' ? 'font-serif-reading' : 'font-sans-ui'
               } ${
                 fontSize === 'sm'
@@ -816,6 +873,86 @@ export const TextAnnotator: React.FC<Props> = ({
           </div>
         )}
       </div>
+
+      {/* Panel de marcado para celular (botones grandes, abajo, sin tapar la selección) */}
+      {isCoarse && mobileSel && (
+        <div
+          className="fixed inset-x-0 bottom-0 z-[60] bg-stone-900 text-white px-3 pt-3 rounded-t-2xl shadow-2xl border-t border-stone-700 animate-in slide-in-from-bottom duration-200"
+          style={{ paddingBottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))' }}
+          onMouseDown={e => e.preventDefault()}
+          onTouchStart={e => e.stopPropagation()}
+        >
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <p className="text-[11px] text-stone-300 italic truncate">
+              “{mobileSel.text.length > 70 ? mobileSel.text.slice(0, 70) + '…' : mobileSel.text}”
+            </p>
+            <button
+              onClick={() => { setMobileSel(null); window.getSelection()?.removeAllRanges(); }}
+              className="shrink-0 w-9 h-9 rounded-lg bg-stone-800 flex items-center justify-center"
+              aria-label="Cancelar selección"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-6 gap-2">
+            {(['yellow', 'green', 'blue', 'pink', 'underline'] as HighlightColor[]).map(color => {
+              const cfg = COLOR_CONFIG[color];
+              const picked = mobileSel.noteMode && mobileSel.noteColor === color;
+              return (
+                <button
+                  key={color}
+                  onClick={() => {
+                    if (mobileSel.noteMode) {
+                      setMobileSel({ ...mobileSel, noteColor: color });
+                    } else {
+                      applyHighlight(mobileSel.start, mobileSel.end, color);
+                      setMobileSel(null);
+                    }
+                  }}
+                  className={`h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 ${picked ? 'ring-2 ring-white' : ''}`}
+                  style={{ backgroundColor: color === 'underline' ? '#e7e5e4' : cfg.iconColor }}
+                >
+                  {color === 'underline' ? (
+                    <span className="text-sm font-bold text-stone-800 underline decoration-2">U</span>
+                  ) : (
+                    <span className="w-4 h-4 rounded-full bg-white/60" />
+                  )}
+                  <span className="text-[9px] font-bold text-stone-900 leading-none">{cfg.name}</span>
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setMobileSel({ ...mobileSel, noteMode: !mobileSel.noteMode, noteColor: mobileSel.noteColor || 'yellow', noteDraft: mobileSel.noteDraft || '' })}
+              className={`h-12 rounded-xl flex flex-col items-center justify-center gap-0.5 ${mobileSel.noteMode ? 'bg-amber-500 text-stone-900' : 'bg-stone-700 text-white'}`}
+            >
+              <StickyNote className="w-4 h-4" />
+              <span className="text-[9px] font-bold leading-none">Nota</span>
+            </button>
+          </div>
+
+          {mobileSel.noteMode && (
+            <div className="flex gap-2 mt-2">
+              <input
+                value={mobileSel.noteDraft || ''}
+                onChange={e => setMobileSel({ ...mobileSel, noteDraft: e.target.value })}
+                placeholder="Escribe tu nota…"
+                className="flex-1 min-w-0 px-3 py-2.5 rounded-lg bg-stone-800 text-white border border-stone-600 focus:outline-none focus:border-amber-400"
+                style={{ fontSize: '16px' }}
+              />
+              <button
+                onClick={() => {
+                  applyHighlight(mobileSel.start, mobileSel.end, mobileSel.noteColor || 'yellow', (mobileSel.noteDraft || '').trim() || undefined);
+                  setMobileSel(null);
+                }}
+                className="px-4 rounded-lg bg-amber-500 text-stone-900 font-bold text-sm"
+              >
+                Guardar
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Floating Toolbar when selecting text */}
       {floatingMenu && (

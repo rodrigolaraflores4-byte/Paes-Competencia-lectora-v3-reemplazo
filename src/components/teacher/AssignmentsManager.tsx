@@ -15,6 +15,7 @@ export const AssignmentsManager: React.FC = () => {
   const [mode, setMode] = useState<AssignmentMode>('evaluacion');
   const [dueDate, setDueDate] = useState('');
   const [maxAttempts, setMaxAttempts] = useState<number>(1);
+  const [editingAsig, setEditingAsig] = useState<Assignment | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
@@ -57,23 +58,58 @@ export const AssignmentsManager: React.FC = () => {
 
     setSaving(true);
     try {
-      await api.createAssignment({
+      const payload = {
         title: title.trim(),
         text_id: selectedTextId,
-        course_ids: [],
-        is_global: true,
         mode,
         due_date: dueDate ? new Date(dueDate).toISOString() : null,
         max_attempts: maxAttempts,
-      });
-      setFeedback('Actividad publicada y disponible para todos los estudiantes.');
+      };
+      if (editingAsig) {
+        await api.updateAssignment(editingAsig.id, payload);
+        setFeedback('Actividad actualizada.');
+      } else {
+        await api.createAssignment({ ...payload, course_ids: [], is_global: true });
+        setFeedback('Actividad publicada y disponible para todos los estudiantes.');
+      }
       setIsModalOpen(false);
+      setEditingAsig(null);
       setTitle('');
       loadData();
     } catch (err: any) {
       setError(err.message || 'Error al crear la asignación');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const openEdit = (asig: Assignment) => {
+    setError(null);
+    setEditingAsig(asig);
+    setTitle(asig.title);
+    setSelectedTextId(asig.text_id);
+    setMode(asig.mode);
+    setMaxAttempts(asig.max_attempts || 1);
+    setDueDate(asig.due_date ? asig.due_date.slice(0, 10) : '');
+    setIsModalOpen(true);
+  };
+
+  const handleDelete = async (asig: Assignment) => {
+    const ok = window.confirm(
+      `¿Eliminar "${asig.title}"?\n\nSe borrarán también los intentos y resultados de los estudiantes en esta actividad. ` +
+      'Si solo quieres que deje de verse, usa "Cerrar acceso".'
+    );
+    if (!ok) return;
+    try {
+      const res = await api.deleteAssignment(asig.id);
+      setFeedback(
+        res.deletedAttempts > 0
+          ? `Actividad eliminada junto con ${res.deletedAttempts} intento(s) de estudiantes.`
+          : 'Actividad eliminada.'
+      );
+      loadData();
+    } catch (err: any) {
+      alert(err.message || 'No se pudo eliminar la actividad.');
     }
   };
 
@@ -110,6 +146,12 @@ export const AssignmentsManager: React.FC = () => {
         <button
           onClick={() => {
             setError(null);
+            setEditingAsig(null);
+            setTitle('');
+            setDueDate('');
+            setMaxAttempts(1);
+            setMode('evaluacion');
+            if (approvedTexts.length > 0) setSelectedTextId(approvedTexts[0].id);
             setIsModalOpen(true);
           }}
           className="px-4 py-2 bg-amber-700 hover:bg-amber-800 text-white rounded-lg text-sm font-bold shadow-xs flex items-center gap-1.5 transition-colors self-start sm:self-auto"
@@ -206,6 +248,20 @@ export const AssignmentsManager: React.FC = () => {
                     {asig.status === 'activa' ? 'Cerrar acceso' : 'Habilitar acceso'}
                   </button>
                 </div>
+                <div className="flex gap-2 pt-2 mt-2 border-t border-stone-100 text-xs">
+                  <button
+                    onClick={() => openEdit(asig)}
+                    className="flex-1 py-2 rounded-lg border border-stone-200 font-semibold text-stone-700 hover:bg-amber-50 hover:border-amber-300 transition-colors"
+                  >
+                    Editar
+                  </button>
+                  <button
+                    onClick={() => handleDelete(asig)}
+                    className="flex-1 py-2 rounded-lg border border-red-200 font-semibold text-red-700 hover:bg-red-50 transition-colors"
+                  >
+                    Eliminar
+                  </button>
+                </div>
               </div>
             );
           })}
@@ -217,7 +273,7 @@ export const AssignmentsManager: React.FC = () => {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-stone-900/60 backdrop-blur-xs p-4 overflow-y-auto">
           <div className="bg-white rounded-xl shadow-2xl max-w-lg w-full p-6 border border-stone-200">
             <h3 className="text-lg font-bold text-stone-900 mb-1">
-              Publicar Ensayo o Actividad
+              {editingAsig ? 'Editar Actividad' : 'Publicar Ensayo o Actividad'}
             </h3>
             <p className="text-xs text-stone-600 mb-4">
               Vincula un texto aprobado del banco para que esté accesible a todos los estudiantes
@@ -259,7 +315,7 @@ export const AssignmentsManager: React.FC = () => {
                     onChange={e => setSelectedTextId(e.target.value)}
                     className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-amber-600/30 focus:border-amber-600 bg-white"
                   >
-                    {approvedTexts.map(t => (
+                    {[...approvedTexts, ...(editingAsig && !approvedTexts.some(t => t.id === editingAsig.text_id) ? [{ id: editingAsig.text_id, title: editingAsig.text_title || 'Texto actual' } as TextItem] : [])].map(t => (
                       <option key={t.id} value={t.id}>
                         {t.title} ({t.questions?.length || 0} preguntas · {t.difficulty})
                       </option>
@@ -320,6 +376,7 @@ export const AssignmentsManager: React.FC = () => {
                     <option value={1}>1 intento estricto</option>
                     <option value={2}>2 intentos</option>
                     <option value={3}>3 intentos</option>
+                    <option value={5}>5 intentos</option>
                     <option value={999}>Ilimitados</option>
                   </select>
                 </div>
@@ -340,7 +397,7 @@ export const AssignmentsManager: React.FC = () => {
               <div className="pt-4 border-t border-stone-200 flex items-center justify-end gap-2">
                 <button
                   type="button"
-                  onClick={() => setIsModalOpen(false)}
+                  onClick={() => { setIsModalOpen(false); setEditingAsig(null); }}
                   className="px-4 py-2 border border-stone-300 rounded-lg text-xs font-semibold text-stone-700"
                 >
                   Cancelar
@@ -350,7 +407,7 @@ export const AssignmentsManager: React.FC = () => {
                   disabled={saving || approvedTexts.length === 0}
                   className="px-4 py-2 bg-amber-700 hover:bg-amber-800 disabled:opacity-50 text-white rounded-lg text-xs font-bold shadow-xs"
                 >
-                  {saving ? 'Publicando...' : 'Publicar Actividad'}
+                  {saving ? 'Guardando...' : editingAsig ? 'Guardar cambios' : 'Publicar Actividad'}
                 </button>
               </div>
             </form>

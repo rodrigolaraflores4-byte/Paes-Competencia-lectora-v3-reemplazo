@@ -33,9 +33,11 @@ apiRouter.use(async (req: Request, res: Response, next: express.NextFunction) =>
     try { await Promise.race([db.ensureUser(sessionUserId), timeout(4000)]); } catch { /* ignorar */ }
   }
 
-  if (process.env.VERCEL && req.method !== 'GET') {
+  if (process.env.VERCEL) {
+    // Antes de responder (en cualquier tipo de petición) se sube lo que haya quedado pendiente
     const originalJson = res.json.bind(res);
     (res as any).json = (body: any) => {
+      if (!db.hasPendingChanges()) return originalJson(body);
       Promise.race([db.flush(), timeout(9000)]).catch(() => {}).finally(() => originalJson(body));
       return res;
     };
@@ -533,6 +535,16 @@ apiRouter.put('/assignments/:id', (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Asignación no encontrada' });
   }
   res.json({ assignment });
+});
+
+apiRouter.delete('/assignments/:id', (req: Request, res: Response) => {
+  const currentUser = getAuthUser(req);
+  if (!currentUser || currentUser.role !== 'docente') {
+    return res.status(403).json({ error: 'Solo los docentes pueden eliminar actividades.' });
+  }
+  const result = db.deleteAssignment(req.params.id);
+  if (!result.success) return res.status(404).json({ error: 'Actividad no encontrada' });
+  res.json(result);
 });
 
 apiRouter.get('/attempts', (req: Request, res: Response) => {

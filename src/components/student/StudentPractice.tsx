@@ -248,7 +248,7 @@ export const StudentPractice: React.FC<Props> = ({ assignmentId, onExit }) => {
   const activeBadge = skillBadge[currentQuestion.skill as DemreSkill] || skillBadge.interpretar_relacionar;
 
   return (
-    <div className="flex flex-col h-[calc(100vh-140px)] min-h-[600px] bg-stone-100 -m-4 sm:-m-6 rounded-xl overflow-hidden border border-stone-200 shadow-sm">
+    <div className="flex flex-col h-[calc(100dvh-140px)] min-h-[480px] sm:min-h-[600px] bg-stone-100 -m-4 sm:-m-6 rounded-xl overflow-hidden border border-stone-200 shadow-sm">
       {/* Top Practice Navigation Bar */}
       <div className="bg-white px-4 py-3 border-b border-stone-200 flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-3">
